@@ -12,16 +12,16 @@ Vulkan tutorial with C on MacOS
 MacOS commands:
 
 ``` bash
-# Install
+# Install dependencies
 brew install glfw cglm molten-vk vulkan-headers
 
-# Environment variables
+# Export environment variables
 export VK_LAYER_PATH=/opt/homebrew/opt/vulkan-validationlayers/share/vulkan/explicit_layer.d
 export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH}:/opt/homebrew/opt/vulkan-validationlayers/lib/"
 
 # Build
 ./build.sh triangle
 
-# build and run
+# Build and run
 ./build.sh triangle --run
 ```
