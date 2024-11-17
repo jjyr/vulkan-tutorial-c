@@ -9,9 +9,15 @@
 #define WIDTH 800
 #define HEIGHT 600
 #define MAX_EXTENSIONS 256
-#define MAX_LAYERS 256
+#define MAX_LAYERS 64
+#define MAX_DEVICES 16
 #define ENABLE_VALICATION_LAYERS 1
 #define VALIDATION_LAYER_COUNT 1
+#define THROW(...)                                                             \
+  do {                                                                         \
+    fprintf(stderr, __VA_ARGS__);                                              \
+    exit(1);                                                                   \
+  } while (0)
 
 static const char *validation_layers[VALIDATION_LAYER_COUNT] = {
     "VK_LAYER_KHRONOS_validation"};
@@ -20,6 +26,11 @@ GLFWwindow *window;
 VkInstance instance = {0};
 VkDebugUtilsMessengerEXT debug_messenger = {0};
 VkDebugUtilsMessengerCreateInfoEXT debug_create_info = {0};
+VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+
+typedef struct {
+  uint32_t graphics_family;
+} QueueFamilyIndices;
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL
 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -101,8 +112,7 @@ void populate_debug_messenger_create_info(
 
 void create_instance() {
   if (ENABLE_VALICATION_LAYERS && !check_validation_layer_support()) {
-    printf("validation layers requested, but not available!");
-    exit(1);
+    THROW("validation layers requested, but not available!\n");
   }
 
   VkApplicationInfo app_info = {0};
@@ -143,9 +153,7 @@ void create_instance() {
   result = vkEnumerateInstanceExtensionProperties(NULL, &avail_extension_count,
                                                   NULL);
   if (result != VK_SUCCESS) {
-    fprintf(stderr, "%d failed to get number of available extensions!\n",
-            result);
-    exit(-1);
+    THROW("%d failed to get number of available extensions!\n", result);
   }
 
   // get available extensions
@@ -153,8 +161,7 @@ void create_instance() {
   result = vkEnumerateInstanceExtensionProperties(NULL, &avail_extension_count,
                                                   avail_extensions);
   if (result != VK_SUCCESS) {
-    fprintf(stderr, "%d failed to get available extensions!\n", result);
-    exit(-1);
+    THROW("%d failed to get available extensions!\n", result);
   }
   printf("available extensions %d:\n", avail_extension_count);
   for (int i = 0; i < avail_extension_count; i++) {
@@ -182,8 +189,7 @@ void create_instance() {
 
   result = vkCreateInstance(&create_info, NULL, &instance);
   if (result != VK_SUCCESS) {
-    fprintf(stderr, "%d failed to create instance!\n", result);
-    exit(-1);
+    THROW("%d failed to create instance!\n", result);
   }
 }
 
@@ -220,14 +226,59 @@ void setup_debug_messenger() {
 
   if (create_debug_utils_messenger_ext(instance, &create_info, NULL,
                                        &debug_messenger) != VK_SUCCESS) {
-    fprintf(stderr, "failed to set up debug messenger!");
-    exit(1);
+    THROW("failed to set up debug messenger!\n");
+  }
+}
+
+int find_queue_families(VkPhysicalDevice device, QueueFamilyIndices *indices) {
+  uint32_t queue_family_count = 0;
+  vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, NULL);
+  VkQueueFamilyProperties queue_families[64];
+  vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count,
+                                           queue_families);
+
+  int complete = 0;
+  for (int i = 0; i < queue_family_count; i++) {
+    if (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+      indices->graphics_family = i;
+      complete = 1;
+    }
+  }
+
+  return complete;
+}
+
+int is_device_suitable(VkPhysicalDevice device) {
+  QueueFamilyIndices indices;
+  int found = find_queue_families(device, &indices);
+  return found;
+}
+
+void pick_physical_device() {
+  uint32_t device_count = 0;
+  vkEnumeratePhysicalDevices(instance, &device_count, NULL);
+  if (device_count == 0) {
+    THROW("failed to find GPUs with Vulkan support!\n");
+  }
+  VkPhysicalDevice devices[MAX_DEVICES] = {0};
+  vkEnumeratePhysicalDevices(instance, &device_count, devices);
+
+  for (int i = 0; i < device_count; i++) {
+    if (is_device_suitable(devices[i])) {
+      physical_device = devices[i];
+      break;
+    }
+  }
+
+  if (physical_device == VK_NULL_HANDLE) {
+    THROW("failed to find suitable GPU!\n");
   }
 }
 
 void init_vulkan() {
   create_instance();
   setup_debug_messenger();
+  pick_physical_device();
 }
 
 void main_loop() {
