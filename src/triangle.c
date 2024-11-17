@@ -27,6 +27,8 @@ VkInstance instance = {0};
 VkDebugUtilsMessengerEXT debug_messenger = {0};
 VkDebugUtilsMessengerCreateInfoEXT debug_create_info = {0};
 VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+VkDevice device = VK_NULL_HANDLE;
+VkQueue graphics_queue;
 
 typedef struct {
   uint32_t graphics_family;
@@ -275,10 +277,49 @@ void pick_physical_device() {
   }
 }
 
+void create_logical_device() {
+  QueueFamilyIndices indices;
+  if (!find_queue_families(physical_device, &indices)) {
+    THROW("Can't find a queue family");
+  }
+
+  VkDeviceQueueCreateInfo queue_create_info = {0};
+  queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+  queue_create_info.queueFamilyIndex = indices.graphics_family;
+  queue_create_info.queueCount = 1;
+
+  float queue_priority = 1.0f;
+  queue_create_info.pQueuePriorities = &queue_priority;
+
+  VkPhysicalDeviceFeatures device_features = {0};
+  const char *extensions[] = {"VK_KHR_portability_subset"};
+  VkDeviceCreateInfo create_info = {0};
+  create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  create_info.pQueueCreateInfos = &queue_create_info;
+  create_info.queueCreateInfoCount = 1;
+  create_info.pEnabledFeatures = &device_features;
+  create_info.enabledExtensionCount = 1;
+  create_info.ppEnabledExtensionNames = extensions;
+  if (ENABLE_VALICATION_LAYERS) {
+    create_info.enabledLayerCount = VALIDATION_LAYER_COUNT;
+    create_info.ppEnabledLayerNames = validation_layers;
+  } else {
+    create_info.enabledLayerCount = 0;
+  }
+
+  if (vkCreateDevice(physical_device, &create_info, NULL, &device) !=
+      VK_SUCCESS) {
+    THROW("failed to create logical device!\n");
+  }
+
+  vkGetDeviceQueue(device, indices.graphics_family, 0, &graphics_queue);
+}
+
 void init_vulkan() {
   create_instance();
   setup_debug_messenger();
   pick_physical_device();
+  create_logical_device();
 }
 
 void main_loop() {
@@ -288,6 +329,7 @@ void main_loop() {
 }
 
 void cleanup() {
+  vkDestroyDevice(device, NULL);
   if (ENABLE_VALICATION_LAYERS) {
     destroy_debug_utils_messenger_ext(instance, debug_messenger, NULL);
   }
