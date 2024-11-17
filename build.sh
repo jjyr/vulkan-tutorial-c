@@ -30,6 +30,7 @@ build() {
 
 if [ $# -eq 0 ]; then
   echo "Build all..."
+  build "setup"
   build "triangle"
 else
   build $1
