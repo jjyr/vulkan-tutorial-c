@@ -16,8 +16,13 @@ MacOS commands:
 brew install glfw cglm molten-vk vulkan-headers
 
 # Export environment variables
-export VK_LAYER_PATH=/opt/homebrew/opt/vulkan-validationlayers/share/vulkan/explicit_layer.d
-export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH}:/opt/homebrew/opt/vulkan-validationlayers/lib/"
+export VK_LAYER_PATH="/opt/homebrew/opt/vulkan-validationlayers/share/vulkan/explicit_layer.d:VK_LAYER_PATH=/opt/homebrew/opt/vulkan-profiles/share/vulkan/explicit_layer.d"
+export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH}:/opt/homebrew/lib/:/opt/homebrew/opt/vulkan-validationlayers/lib/"
+# Enable debug output
+export VK_LOADER_DEBUG=all
+
+# Build all
+./build.sh
 
 # Build
 ./build.sh triangle

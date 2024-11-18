@@ -2,7 +2,7 @@
 
 CC=cc
 FLAGS="-I /opt/homebrew/include -L/opt/homebrew/lib/ -lglfw -lvulkan.1"
-DYLD_LIBRARY_PATH="/opt/homebrew/opt/vulkan-validationlayers/lib/"
+DYLD_LIBRARY_PATH="/opt/homebrew/lib/:/opt/homebrew/opt/vulkan-validationlayers/lib/"
 
 build() {
   local filename=$1
