@@ -15,6 +15,8 @@
 #define VALIDATION_LAYER_COUNT 1
 #define DEVICE_EXTENSIONS_COUNT 2
 #define QUEUE_COUNT 2
+#define MAX_SWAP_CHAIN_IMAGES_COUNT 16
+
 #define THROW(...)                                                             \
   do {                                                                         \
     fprintf(stderr, __VA_ARGS__);                                              \
@@ -37,6 +39,10 @@ VkQueue graphics_queue;
 VkQueue present_queue;
 VkSurfaceKHR surface;
 VkSwapchainKHR swap_chain;
+uint32_t swap_chain_images_count = 0;
+VkImage swap_chain_images[MAX_SWAP_CHAIN_IMAGES_COUNT];
+VkFormat swap_chain_image_format;
+VkExtent2D swap_chain_extent;
 
 typedef struct {
   VkSurfaceCapabilitiesKHR capabilities;
@@ -521,6 +527,12 @@ void create_swap_chain() {
       VK_SUCCESS) {
     THROW("failed to create swap chain!\n");
   }
+
+  vkGetSwapchainImagesKHR(device, swap_chain, &swap_chain_images_count, NULL);
+  vkGetSwapchainImagesKHR(device, swap_chain, &swap_chain_images_count,
+                          swap_chain_images);
+  swap_chain_image_format = surface_format.format;
+  swap_chain_extent = extent;
 }
 
 void init_vulkan() {
