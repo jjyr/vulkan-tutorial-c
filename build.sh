@@ -35,6 +35,10 @@ if [ $# -eq 0 ]; then
 else
   build $1
 
+  if ["$?" -ne 0]; then
+    exit $?
+  fi
+
   if [ "${2}" = "--run" ]; then
     OUT="build/${1}"
     echo "Run $OUT"
