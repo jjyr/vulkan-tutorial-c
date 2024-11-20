@@ -1437,41 +1437,6 @@ void create_texture_image() {
                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &texture_image,
                &texture_image_memory);
 
-  VkImageCreateInfo image_info = {0};
-  image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-  image_info.imageType = VK_IMAGE_TYPE_2D;
-  image_info.extent.width = (uint32_t)tex_width;
-  image_info.extent.height = (uint32_t)tex_height;
-  image_info.extent.depth = 1;
-  image_info.mipLevels = 1;
-  image_info.arrayLayers = 1;
-  image_info.format = VK_FORMAT_R8G8B8A8_SRGB;
-  image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  image_info.usage =
-      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-  image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-  image_info.flags = 0;
-
-  if (vkCreateImage(device, &image_info, NULL, &texture_image) != VK_SUCCESS) {
-    THROW("failed to create image!\n");
-  }
-
-  VkMemoryRequirements mem_requirements;
-  vkGetImageMemoryRequirements(device, texture_image, &mem_requirements);
-
-  VkMemoryAllocateInfo alloc_info = {0};
-  alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  alloc_info.allocationSize = mem_requirements.size;
-  alloc_info.memoryTypeIndex = find_memory_type(
-      mem_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  if (vkAllocateMemory(device, &alloc_info, NULL, &texture_image_memory) !=
-      VK_SUCCESS) {
-    THROW("failed to allocate image memory!\n");
-  }
-  vkBindImageMemory(device, texture_image, texture_image_memory, 0);
-
   transition_image_layout(texture_image, VK_FORMAT_R8G8B8A8_SRGB,
                           VK_IMAGE_LAYOUT_UNDEFINED,
                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
