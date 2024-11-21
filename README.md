@@ -20,6 +20,9 @@ brew install cglm
 # vulkan
 brew install molten-vk vulkan-headers vulkan-extensionlayer vulkan-tools vulkan-utility-libraries vulkan-loader vulkan-validationlayers vulkan-profiles vulkan-volk
 
+# install headers
+cp deps/*.h /usr/local/include
+
 # Export environment variables
 export VK_LAYER_PATH="/opt/homebrew/opt/vulkan-validationlayers/share/vulkan/explicit_layer.d:VK_LAYER_PATH=/opt/homebrew/opt/vulkan-profiles/share/vulkan/explicit_layer.d"
 export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH}:/opt/homebrew/lib/:/opt/homebrew/opt/vulkan-validationlayers/lib/"

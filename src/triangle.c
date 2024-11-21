@@ -13,6 +13,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define TINYOBJ_LOADER_C_IMPLEMENTATION
+#include "tinyobj_loader_c.h"
+
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
@@ -32,6 +35,11 @@
 #define MAX_SHADER_CODE 4096
 #define MAX_FRAMES_IN_FLIGHT 2
 #define ATTRIBUTE_DESCRIPTIONS_LEN 3
+#define MODEL_PATH "models/viking_room.obj"
+#define TEXTURE_PATH "textures/viking_room.png"
+#define MAX_VERTEX_LEN 16384
+#define MAX_VERTEX_INDICES_LEN 16384
+#define MAX_MODEL_LEN 524288
 
 #define THROW(...)                                                             \
   do {                                                                         \
@@ -77,8 +85,6 @@ VkSemaphore render_finished_semaphores[MAX_FRAMES_IN_FLIGHT];
 VkFence in_flight_fences[MAX_FRAMES_IN_FLIGHT];
 uint32_t current_frame = 0;
 int framebuffer_resized = 0;
-VkBuffer vertex_buffer;
-VkDeviceMemory vertex_buffer_memory;
 VkBuffer index_buffer;
 VkDeviceMemory index_buffer_memory;
 VkDescriptorSetLayout descriptor_set_layout;
@@ -97,6 +103,8 @@ VkSampler texture_sampler;
 VkImage depth_image;
 VkDeviceMemory depth_image_memory;
 VkImageView depth_image_view;
+char model_object_buffer[MAX_MODEL_LEN];
+char model_material_buffer[MAX_MODEL_LEN];
 
 static struct timespec start_timer;
 
@@ -112,19 +120,14 @@ typedef struct {
   vec2 tex_coord;
 } Vertex;
 
-static uint32_t vertices_len = 8;
-static const Vertex vertices[] = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+static uint32_t vertices_len = 0;
+static Vertex vertices[MAX_VERTEX_LEN];
 
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}};
-static uint32_t indices_len = 12;
-static const uint16_t indices[] = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
+static uint32_t indices_len = 0;
+static uint32_t indices[MAX_VERTEX_INDICES_LEN];
+
+VkBuffer vertex_buffer;
+VkDeviceMemory vertex_buffer_memory;
 
 void create_depth_resources();
 
@@ -1070,7 +1073,7 @@ void record_command_buffer(VkCommandBuffer command_buffer,
   VkBuffer vertex_buffers[] = {vertex_buffer};
   VkDeviceSize offsets[] = {0};
   vkCmdBindVertexBuffers(command_buffer, 0, 1, vertex_buffers, offsets);
-  vkCmdBindIndexBuffer(command_buffer, index_buffer, 0, VK_INDEX_TYPE_UINT16);
+  vkCmdBindIndexBuffer(command_buffer, index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
   VkViewport viewport = {0};
   viewport.x = 0.0f;
@@ -1284,7 +1287,7 @@ void transition_image_layout(VkImage image, VkFormat format,
 
   if (new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
 
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
     if (has_stencil_component(format)) {
       barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
     }
@@ -1514,7 +1517,7 @@ void create_image(uint32_t width, uint32_t height, VkFormat format,
 
 void create_texture_image() {
   int tex_width, tex_height, tex_channels;
-  stbi_uc *pixels = stbi_load("textures/texture.jpg", &tex_width, &tex_height,
+  stbi_uc *pixels = stbi_load(TEXTURE_PATH, &tex_width, &tex_height,
                               &tex_channels, STBI_rgb_alpha);
   VkDeviceSize image_size = tex_width * tex_height * 4;
   if (!pixels) {
@@ -1598,6 +1601,75 @@ void create_depth_resources() {
                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 }
 
+static void get_file_data(void *ctx, const char *filename, const int is_mtl,
+                          const char *obj_filename, char **data, size_t *len) {
+  (void)ctx;
+
+  if (!filename) {
+    fprintf(stderr, "null filename\n");
+    (*data) = NULL;
+    (*len) = 0;
+    return;
+  }
+
+  char *buffer;
+  if (strcmp(filename, "models/viking_room.obj") == 0) {
+    buffer = model_object_buffer;
+  } else if (strcmp(filename, "models/viking_room.mtl") == 0) {
+    buffer = model_material_buffer;
+  } else {
+    THROW("failed to get file\n");
+  }
+
+  uint32_t data_len = read_file((char *)filename, buffer);
+  (*len) = data_len;
+  (*data) = buffer;
+
+  assert(data_len < MAX_MODEL_LEN);
+}
+
+void load_model() {
+  tinyobj_attrib_t attrib = {0};
+  tinyobj_shape_t *shapes = NULL;
+  size_t num_shapes;
+  tinyobj_material_t *materials = NULL;
+  size_t num_materials;
+  unsigned int flags = TINYOBJ_FLAG_TRIANGULATE;
+
+  if (tinyobj_parse_obj(&attrib, &shapes, &num_shapes, &materials,
+                        &num_materials, MODEL_PATH, get_file_data, NULL,
+                        flags) != TINYOBJ_SUCCESS) {
+    THROW("failed to load model!\n");
+  }
+
+  int face_offset = 0;
+  for (int i = 0; i < attrib.num_face_num_verts; i++) {
+    for (int j = 0; j < (size_t)attrib.face_num_verts[i]; j++) {
+      Vertex *vertex = &vertices[vertices_len];
+
+      tinyobj_vertex_index_t idx = attrib.faces[j + face_offset];
+
+      vertex->pos[0] = attrib.vertices[3 * idx.v_idx + 0];
+      vertex->pos[1] = attrib.vertices[3 * idx.v_idx + 1];
+      vertex->pos[2] = attrib.vertices[3 * idx.v_idx + 2];
+
+      vertex->tex_coord[0] = attrib.texcoords[2 * idx.vt_idx + 0];
+      vertex->tex_coord[1] = attrib.texcoords[2 * idx.vt_idx + 1];
+
+      vertex->color[0] = 1.0f;
+      vertex->color[1] = 1.0f;
+      vertex->color[2] = 1.0f;
+
+      vertices_len += 1;
+      assert(vertices_len < MAX_VERTEX_LEN);
+      indices[indices_len] = indices_len;
+      indices_len += 1;
+      assert(indices_len < MAX_VERTEX_INDICES_LEN);
+    }
+    face_offset += (size_t)attrib.face_num_verts[i];
+  }
+}
+
 void init_vulkan() {
   create_instance();
   setup_debug_messenger();
@@ -1615,6 +1687,7 @@ void init_vulkan() {
   create_texture_image();
   create_texture_image_view();
   create_texture_sampler();
+  load_model();
   create_vertex_buffer();
   create_index_buffer();
   create_uniform_buffers();
