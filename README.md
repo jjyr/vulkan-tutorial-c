@@ -37,8 +37,8 @@ export VK_LOADER_DEBUG=all
 ./build.sh
 
 # Build
-./build.sh triangle
+./build.sh tutorial
 
 # Build and run
-./build.sh triangle --run
+./build.sh tutorial --run
 ```
