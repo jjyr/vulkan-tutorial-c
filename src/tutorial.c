@@ -126,6 +126,18 @@ static Vertex vertices[MAX_VERTEX_LEN];
 static uint32_t indices_len = 0;
 static uint32_t indices[MAX_VERTEX_INDICES_LEN];
 
+int find_vertex(Vertex *v1) {
+  for (int i = 0; i < vertices_len; i++) {
+    Vertex *v2 = &vertices[i];
+
+    if (glm_vec3_eqv(v1->pos, v2->pos) && glm_vec3_eqv(v1->color, v2->color) &&
+        glm_vec2_eqv(v1->tex_coord, v2->tex_coord)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 VkBuffer vertex_buffer;
 VkDeviceMemory vertex_buffer_memory;
 
@@ -1654,15 +1666,20 @@ void load_model() {
       vertex->pos[2] = attrib.vertices[3 * idx.v_idx + 2];
 
       vertex->tex_coord[0] = attrib.texcoords[2 * idx.vt_idx + 0];
-      vertex->tex_coord[1] = attrib.texcoords[2 * idx.vt_idx + 1];
+      vertex->tex_coord[1] = 1.0f - attrib.texcoords[2 * idx.vt_idx + 1];
 
       vertex->color[0] = 1.0f;
       vertex->color[1] = 1.0f;
       vertex->color[2] = 1.0f;
 
-      vertices_len += 1;
-      assert(vertices_len < MAX_VERTEX_LEN);
-      indices[indices_len] = indices_len;
+      int index = find_vertex(vertex);
+      if (index == -1) {
+        index = vertices_len;
+        vertices_len += 1;
+        assert(vertices_len < MAX_VERTEX_LEN);
+      }
+
+      indices[indices_len] = index;
       indices_len += 1;
       assert(indices_len < MAX_VERTEX_INDICES_LEN);
     }
