@@ -104,6 +104,10 @@ VkDeviceMemory depth_image_memory;
 VkImageView depth_image_view;
 char model_object_buffer[MAX_MODEL_LEN];
 char model_material_buffer[MAX_MODEL_LEN];
+VkSampleCountFlagBits msaa_samples = VK_SAMPLE_COUNT_1_BIT;
+VkImage color_image;
+VkDeviceMemory color_image_memory;
+VkImageView color_image_view;
 
 static struct timespec start_timer;
 
@@ -140,7 +144,38 @@ int find_vertex(Vertex *v1) {
 VkBuffer vertex_buffer;
 VkDeviceMemory vertex_buffer_memory;
 
+void create_color_resources();
 void create_depth_resources();
+
+VkSampleCountFlagBits get_max_usable_sample_count() {
+  VkPhysicalDeviceProperties physical_device_properties;
+  vkGetPhysicalDeviceProperties(physical_device, &physical_device_properties);
+
+  VkSampleCountFlags counts =
+      physical_device_properties.limits.framebufferColorSampleCounts &
+      physical_device_properties.limits.framebufferDepthSampleCounts;
+
+  if (counts & VK_SAMPLE_COUNT_64_BIT) {
+    return VK_SAMPLE_COUNT_64_BIT;
+  }
+  if (counts & VK_SAMPLE_COUNT_32_BIT) {
+    return VK_SAMPLE_COUNT_32_BIT;
+  }
+  if (counts & VK_SAMPLE_COUNT_16_BIT) {
+    return VK_SAMPLE_COUNT_16_BIT;
+  }
+  if (counts & VK_SAMPLE_COUNT_8_BIT) {
+    return VK_SAMPLE_COUNT_8_BIT;
+  }
+  if (counts & VK_SAMPLE_COUNT_4_BIT) {
+    return VK_SAMPLE_COUNT_4_BIT;
+  }
+  if (counts & VK_SAMPLE_COUNT_2_BIT) {
+    return VK_SAMPLE_COUNT_2_BIT;
+  }
+
+  return VK_SAMPLE_COUNT_1_BIT;
+}
 
 static VkVertexInputBindingDescription get_binding_description() {
   VkVertexInputBindingDescription binding_description = {0};
@@ -537,6 +572,7 @@ void pick_physical_device() {
   for (int i = 0; i < device_count; i++) {
     if (is_device_suitable(devices[i])) {
       physical_device = devices[i];
+      msaa_samples = get_max_usable_sample_count();
       break;
     }
   }
@@ -585,6 +621,7 @@ void create_logical_device() {
 
   VkPhysicalDeviceFeatures device_features = {0};
   device_features.samplerAnisotropy = VK_TRUE;
+  device_features.sampleRateShading = VK_TRUE;
   VkDeviceCreateInfo create_info = {0};
   create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   create_info.pQueueCreateInfos = queue_create_infos;
@@ -846,9 +883,9 @@ void create_graphics_pipeline() {
   VkPipelineMultisampleStateCreateInfo multisampling = {0};
   multisampling.sType =
       VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-  multisampling.sampleShadingEnable = VK_FALSE;
-  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-  multisampling.minSampleShading = 1.0f;
+  multisampling.sampleShadingEnable = VK_TRUE;
+  multisampling.rasterizationSamples = msaa_samples;
+  multisampling.minSampleShading = .2f;
   multisampling.pSampleMask = NULL;
   multisampling.alphaToCoverageEnable = VK_FALSE;
   multisampling.alphaToOneEnable = VK_FALSE;
@@ -957,21 +994,36 @@ VkFormat find_depth_format() {
 void create_render_pass() {
   VkAttachmentDescription color_attachment = {0};
   color_attachment.format = swap_chain_image_format;
-  color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+  color_attachment.samples = msaa_samples;
   color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
   VkAttachmentReference color_attachment_ref = {0};
   color_attachment_ref.attachment = 0;
   color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+  VkAttachmentDescription color_attachment_resolve = {0};
+  color_attachment_resolve.format = swap_chain_image_format;
+  color_attachment_resolve.samples = VK_SAMPLE_COUNT_1_BIT;
+  color_attachment_resolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  color_attachment_resolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  color_attachment_resolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  color_attachment_resolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  color_attachment_resolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  color_attachment_resolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+  VkAttachmentReference color_attachment_resolve_ref = {0};
+  color_attachment_resolve_ref.attachment = 2;
+  color_attachment_resolve_ref.layout =
+      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
   VkAttachmentDescription depth_attachment = {0};
   depth_attachment.format = find_depth_format();
-  depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+  depth_attachment.samples = msaa_samples;
   depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -990,6 +1042,7 @@ void create_render_pass() {
   subpass.colorAttachmentCount = 1;
   subpass.pColorAttachments = &color_attachment_ref;
   subpass.pDepthStencilAttachment = &depth_attachment_ref;
+  subpass.pResolveAttachments = &color_attachment_resolve_ref;
 
   VkSubpassDependency dependency = {0};
   dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -1002,11 +1055,12 @@ void create_render_pass() {
   dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                              VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-  VkAttachmentDescription attachments[] = {color_attachment, depth_attachment};
+  VkAttachmentDescription attachments[] = {color_attachment, depth_attachment,
+                                           color_attachment_resolve};
 
   VkRenderPassCreateInfo render_pass_info = {0};
   render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-  render_pass_info.attachmentCount = 2;
+  render_pass_info.attachmentCount = 3;
   render_pass_info.pAttachments = attachments;
   render_pass_info.subpassCount = 1;
   render_pass_info.pSubpasses = &subpass;
@@ -1022,12 +1076,16 @@ void create_render_pass() {
 void create_framebuffers() {
   swap_chain_framebuffers_count = swap_chain_image_views_count;
   for (int i = 0; i < swap_chain_image_views_count; i++) {
-    VkImageView attachments[] = {swap_chain_image_views[i], depth_image_view};
+    VkImageView attachments[] = {
+        color_image_view,
+        depth_image_view,
+        swap_chain_image_views[i],
+    };
 
     VkFramebufferCreateInfo framebuffer_info = {0};
     framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     framebuffer_info.renderPass = render_pass;
-    framebuffer_info.attachmentCount = 2;
+    framebuffer_info.attachmentCount = 3;
     framebuffer_info.pAttachments = attachments;
     framebuffer_info.width = swap_chain_extent.width;
     framebuffer_info.height = swap_chain_extent.height;
@@ -1143,6 +1201,10 @@ void create_sync_objects() {
 }
 
 void cleanup_swap_chain() {
+  vkDestroyImageView(device, color_image_view, NULL);
+  vkDestroyImage(device, color_image, NULL);
+  vkFreeMemory(device, color_image_memory, NULL);
+
   vkDestroyImageView(device, depth_image_view, NULL);
   vkDestroyImage(device, depth_image, NULL);
   vkFreeMemory(device, depth_image_memory, NULL);
@@ -1172,6 +1234,7 @@ void recreate_swap_chain() {
 
   create_swap_chain();
   create_image_views();
+  create_color_resources();
   create_depth_resources();
   create_framebuffers();
 }
@@ -1491,9 +1554,10 @@ void create_descriptor_sets() {
 }
 
 void create_image(uint32_t width, uint32_t height, uint32_t mip_levels,
-                  VkFormat format, VkImageTiling tiling,
-                  VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
-                  VkImage *image, VkDeviceMemory *image_memory) {
+                  VkSampleCountFlagBits num_samples, VkFormat format,
+                  VkImageTiling tiling, VkImageUsageFlags usage,
+                  VkMemoryPropertyFlags properties, VkImage *image,
+                  VkDeviceMemory *image_memory) {
   VkImageCreateInfo image_info = {0};
   image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -1507,7 +1571,7 @@ void create_image(uint32_t width, uint32_t height, uint32_t mip_levels,
   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   image_info.usage = usage;
   image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+  image_info.samples = num_samples;
 
   if (vkCreateImage(device, &image_info, NULL, image) != VK_SUCCESS) {
     THROW("failed to create image!\n");
@@ -1648,8 +1712,8 @@ void create_texture_image() {
   vkUnmapMemory(device, staging_buffer_memory);
   stbi_image_free(pixels);
 
-  create_image(tex_width, tex_height, mip_levels, VK_FORMAT_R8G8B8A8_SRGB,
-               VK_IMAGE_TILING_OPTIMAL,
+  create_image(tex_width, tex_height, mip_levels, VK_SAMPLE_COUNT_1_BIT,
+               VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
                VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &texture_image,
@@ -1706,10 +1770,11 @@ void create_texture_sampler() {
 
 void create_depth_resources() {
   VkFormat depth_format = find_depth_format();
-  create_image(
-      swap_chain_extent.width, swap_chain_extent.height, 1, depth_format,
-      VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_image, &depth_image_memory);
+  create_image(swap_chain_extent.width, swap_chain_extent.height, 1,
+               msaa_samples, depth_format, VK_IMAGE_TILING_OPTIMAL,
+               VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_image,
+               &depth_image_memory);
   depth_image_view = create_image_view(depth_image, depth_format,
                                        VK_IMAGE_ASPECT_DEPTH_BIT, 1);
   transition_image_layout(depth_image, depth_format, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1790,6 +1855,19 @@ void load_model() {
   }
 }
 
+void create_color_resources() {
+  VkFormat color_format = swap_chain_image_format;
+
+  create_image(swap_chain_extent.width, swap_chain_extent.height, 1,
+               msaa_samples, color_format, VK_IMAGE_TILING_OPTIMAL,
+               VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
+                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &color_image,
+               &color_image_memory);
+  color_image_view = create_image_view(color_image, color_format,
+                                       VK_IMAGE_ASPECT_COLOR_BIT, 1);
+}
+
 void init_vulkan() {
   create_instance();
   setup_debug_messenger();
@@ -1802,6 +1880,7 @@ void init_vulkan() {
   create_descriptor_set_layout();
   create_graphics_pipeline();
   create_command_pool();
+  create_color_resources();
   create_depth_resources();
   create_framebuffers();
   create_texture_image();
