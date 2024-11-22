@@ -1,7 +1,5 @@
 #include "vulkan/vulkan_core.h"
 #include <GLFW/glfw3.h>
-#include <_time.h>
-#include <i386/types.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -96,6 +94,7 @@ uint32_t uniform_buffers_mapped_len;
 void *uniform_buffers_mapped[32];
 VkDescriptorPool descriptor_pool;
 VkDescriptorSet descriptor_sets[MAX_FRAMES_IN_FLIGHT];
+uint32_t mip_levels;
 VkImage texture_image;
 VkDeviceMemory texture_image_memory;
 VkImageView texture_image_view;
@@ -675,7 +674,8 @@ void create_swap_chain() {
 }
 
 VkImageView create_image_view(VkImage image, VkFormat format,
-                              VkImageAspectFlags aspect_flags) {
+                              VkImageAspectFlags aspect_flags,
+                              uint32_t mip_levels) {
   VkImageViewCreateInfo view_info = {0};
   view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   view_info.image = image;
@@ -683,7 +683,7 @@ VkImageView create_image_view(VkImage image, VkFormat format,
   view_info.format = format;
   view_info.subresourceRange.aspectMask = aspect_flags;
   view_info.subresourceRange.baseMipLevel = 0;
-  view_info.subresourceRange.levelCount = 1;
+  view_info.subresourceRange.levelCount = mip_levels;
   view_info.subresourceRange.baseArrayLayer = 0;
   view_info.subresourceRange.layerCount = 1;
 
@@ -700,7 +700,7 @@ void create_image_views() {
   for (int i = 0; i < swap_chain_images_count; i++) {
     swap_chain_image_views[i] =
         create_image_view(swap_chain_images[i], swap_chain_image_format,
-                          VK_IMAGE_ASPECT_COLOR_BIT);
+                          VK_IMAGE_ASPECT_COLOR_BIT, 1);
   }
 }
 
@@ -1282,8 +1282,8 @@ int has_stencil_component(VkFormat format) {
 }
 
 void transition_image_layout(VkImage image, VkFormat format,
-                             VkImageLayout old_layout,
-                             VkImageLayout new_layout) {
+                             VkImageLayout old_layout, VkImageLayout new_layout,
+                             uint32_t mip_levels) {
 
   VkCommandBuffer command_buffer = begin_single_time_commands();
 
@@ -1308,7 +1308,7 @@ void transition_image_layout(VkImage image, VkFormat format,
   }
 
   barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.levelCount = mip_levels;
   barrier.subresourceRange.baseArrayLayer = 0;
   barrier.subresourceRange.layerCount = 1;
 
@@ -1490,17 +1490,17 @@ void create_descriptor_sets() {
   }
 }
 
-void create_image(uint32_t width, uint32_t height, VkFormat format,
-                  VkImageTiling tiling, VkImageUsageFlags usage,
-                  VkMemoryPropertyFlags properties, VkImage *image,
-                  VkDeviceMemory *image_memory) {
+void create_image(uint32_t width, uint32_t height, uint32_t mip_levels,
+                  VkFormat format, VkImageTiling tiling,
+                  VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+                  VkImage *image, VkDeviceMemory *image_memory) {
   VkImageCreateInfo image_info = {0};
   image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   image_info.imageType = VK_IMAGE_TYPE_2D;
   image_info.extent.width = width;
   image_info.extent.height = height;
   image_info.extent.depth = 1;
-  image_info.mipLevels = 1;
+  image_info.mipLevels = mip_levels;
   image_info.arrayLayers = 1;
   image_info.format = format;
   image_info.tiling = tiling;
@@ -1527,6 +1527,103 @@ void create_image(uint32_t width, uint32_t height, VkFormat format,
   vkBindImageMemory(device, *image, *image_memory, 0);
 }
 
+void generate_mipmaps(VkImage image, VkFormat image_format, int32_t tex_width,
+                      int32_t tex_height, uint32_t mip_levels) {
+
+  VkFormatProperties format_properties;
+  vkGetPhysicalDeviceFormatProperties(physical_device, image_format,
+                                      &format_properties);
+
+  if (!(format_properties.optimalTilingFeatures &
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
+    THROW("texture image format does not support linear blitting!\n");
+  }
+
+  VkCommandBuffer command_buffer = begin_single_time_commands();
+
+  VkImageMemoryBarrier barrier = {0};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.image = image;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.subresourceRange.levelCount = 1;
+
+  int32_t mip_width = tex_width;
+  int32_t mip_height = tex_height;
+
+  for (int i = 1; i < mip_levels; i++) {
+
+    barrier.subresourceRange.baseMipLevel = i - 1;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1,
+                         &barrier);
+
+    VkImageBlit blit = {0};
+    blit.srcOffsets[0].x = 0;
+    blit.srcOffsets[0].y = 0;
+    blit.srcOffsets[0].z = 0;
+
+    blit.srcOffsets[1].x = mip_width;
+    blit.srcOffsets[1].y = mip_height;
+    blit.srcOffsets[1].z = 1;
+
+    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.srcSubresource.mipLevel = i - 1;
+    blit.srcSubresource.baseArrayLayer = 0;
+    blit.srcSubresource.layerCount = 1;
+
+    blit.dstOffsets[0].x = 0;
+    blit.dstOffsets[0].y = 0;
+    blit.dstOffsets[0].z = 0;
+
+    blit.dstOffsets[1].x = mip_width > 1 ? mip_width / 2 : 1;
+    blit.dstOffsets[1].y = mip_height > 1 ? mip_height / 2 : 1;
+    blit.dstOffsets[1].z = 1;
+
+    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.dstSubresource.mipLevel = i;
+    blit.dstSubresource.baseArrayLayer = 0;
+    blit.dstSubresource.layerCount = 1;
+
+    vkCmdBlitImage(command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                   VK_FILTER_LINEAR);
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                         NULL, 1, &barrier);
+    if (mip_width > 1)
+      mip_width /= 2;
+    if (mip_height > 1)
+      mip_height /= 2;
+  }
+
+  barrier.subresourceRange.baseMipLevel = mip_levels - 1;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                       NULL, 1, &barrier);
+
+  end_single_time_commands(command_buffer);
+}
+
 void create_texture_image() {
   int tex_width, tex_height, tex_channels;
   stbi_uc *pixels = stbi_load(TEXTURE_PATH, &tex_width, &tex_height,
@@ -1535,6 +1632,8 @@ void create_texture_image() {
   if (!pixels) {
     THROW("failed to load texture image!\n");
   }
+
+  mip_levels = (uint32_t)floorf(log2f(glm_max(tex_width, tex_height))) + 1;
 
   VkBuffer staging_buffer;
   VkDeviceMemory staging_buffer_memory;
@@ -1549,26 +1648,30 @@ void create_texture_image() {
   vkUnmapMemory(device, staging_buffer_memory);
   stbi_image_free(pixels);
 
-  create_image(tex_width, tex_height, VK_FORMAT_R8G8B8A8_SRGB,
+  create_image(tex_width, tex_height, mip_levels, VK_FORMAT_R8G8B8A8_SRGB,
                VK_IMAGE_TILING_OPTIMAL,
-               VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+               VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                   VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &texture_image,
                &texture_image_memory);
 
   transition_image_layout(texture_image, VK_FORMAT_R8G8B8A8_SRGB,
                           VK_IMAGE_LAYOUT_UNDEFINED,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mip_levels);
   copy_buffer_to_image(staging_buffer, texture_image, tex_width, tex_height);
-  transition_image_layout(texture_image, VK_FORMAT_R8G8B8A8_SRGB,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  // transition_image_layout(texture_image, VK_FORMAT_R8G8B8A8_SRGB,
+  //                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+  //                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+  //                         mip_levels);
   vkDestroyBuffer(device, staging_buffer, NULL);
   vkFreeMemory(device, staging_buffer_memory, NULL);
+  generate_mipmaps(texture_image, VK_FORMAT_R8G8B8A8_SRGB, tex_width,
+                   tex_height, mip_levels);
 }
 
 void create_texture_image_view() {
   texture_image_view = create_image_view(texture_image, VK_FORMAT_R8G8B8A8_SRGB,
-                                         VK_IMAGE_ASPECT_COLOR_BIT);
+                                         VK_IMAGE_ASPECT_COLOR_BIT, mip_levels);
 }
 
 void create_texture_sampler() {
@@ -1593,7 +1696,7 @@ void create_texture_sampler() {
   sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
   sampler_info.mipLodBias = 0.0f;
   sampler_info.minLod = 0.0f;
-  sampler_info.maxLod = 0.0f;
+  sampler_info.maxLod = (float)mip_levels;
 
   if (vkCreateSampler(device, &sampler_info, NULL, &texture_sampler) !=
       VK_SUCCESS) {
@@ -1604,13 +1707,13 @@ void create_texture_sampler() {
 void create_depth_resources() {
   VkFormat depth_format = find_depth_format();
   create_image(
-      swap_chain_extent.width, swap_chain_extent.height, depth_format,
+      swap_chain_extent.width, swap_chain_extent.height, 1, depth_format,
       VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_image, &depth_image_memory);
-  depth_image_view =
-      create_image_view(depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT);
+  depth_image_view = create_image_view(depth_image, depth_format,
+                                       VK_IMAGE_ASPECT_DEPTH_BIT, 1);
   transition_image_layout(depth_image, depth_format, VK_IMAGE_LAYOUT_UNDEFINED,
-                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
 }
 
 static void get_file_data(void *ctx, const char *filename, const int is_mtl,
